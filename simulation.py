@@ -1,7 +1,7 @@
 import random
 import string
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from enum import Enum, auto
 from functools import partial
 from typing import Optional, Callable
@@ -129,6 +129,14 @@ class TrafficGrid:
                 frontiers.add(intersection)
 
         return frontiers
+
+    def all_intersections(self) -> list[Intersection]:
+        intersections = []
+
+        for intersection in self.intersection_graph.keys():
+            intersections.append(intersection)
+
+        return intersections
 
     def all_intersections_including_street(self, street: str) -> list[Intersection]:
         intersections = []
@@ -267,6 +275,13 @@ if __name__ == '__main__':
         Intersection('serrano', 'freire'),
         Intersection('salas', 'freire'),
     ]
+
+    import json
+    json_path = {'path': []}
+    for json_intersection in (asdict(intersection) for intersection in path):
+        json_path['path'].append(json_intersection)
+
+    print(json.dumps(json_path, indent=2))
 
     grid.insert_path('AA-AA-AA', path)
     path_found = grid.find_path_for_plate('AA-AA-AA', 'HLL')
