@@ -253,9 +253,31 @@ class TrafficGrid:
 
         return path
 
+    def find_path_for_plate_raw_sketch(self, car_plate: str, sketch: str):
+        path = set()
+
+        for intersection in self.intersection_graph.keys():
+            if sketch == 'HLL':
+                sketch_copy = deepcopy(self._intersection_to_camera_map.get(intersection).hll_sketch)
+            elif sketch == 'PCSA':
+                sketch_copy = deepcopy(self._intersection_to_camera_map.get(intersection).pcsa_sketch)
+            else:
+                raise TypeError
+
+            M = deepcopy(sketch_copy.M)
+
+            sketch_copy.add(car_plate)
+
+            for bucket_pre_add, bucket_post_add in zip(M, sketch_copy.M):
+                if bucket_pre_add != bucket_post_add:
+                    path.add(intersection)
+                    break
+
+        return path
+
 
 if __name__ == '__main__':
-    grid = TrafficGrid(generate_intersection_graph(), init_p=17, init_b=12)
+    grid = TrafficGrid(generate_intersection_graph(), init_p=20, init_b=12)
 
     print(grid.intersection_graph[Intersection('rozas', 'serrano')])
     print(grid.all_intersections_including_street('rozas'))
@@ -285,10 +307,14 @@ if __name__ == '__main__':
 
     grid.insert_path('AA-AA-AA', path)
     path_found = grid.find_path_for_plate('AA-AA-AA', 'HLL')
+    raw_path_found = grid.find_path_for_plate_raw_sketch('AA-AA-AA', 'HLL')
     print('path found (hll): ', path_found)
+    print('path found (hll, raw)', raw_path_found)
 
     spurious_intersections = path_found.difference(path)
     print(f'spurious intersections ({len(spurious_intersections)}, HLL) {spurious_intersections}')
+    raw_suprious_intersections = raw_path_found.difference(path)
+    print(f'spurious intersections ({len(raw_suprious_intersections)}, HLL, raw) {raw_suprious_intersections}')
 
     path_found = grid.find_path_for_plate('AA-AA-AA', 'PCSA')
     print('path found (pcsa): ', path_found)
