@@ -3,15 +3,15 @@ from abc import ABC, abstractmethod
 from array import array
 from enum import Enum, auto
 from math import log
-from random import random
-from typing import Iterable, Optional
+from typing import Iterable, Optional, List
+from scipy.stats import bernoulli
 
 import mmh3
 
 
 class CardinalityEstimator(ABC):
     @abstractmethod
-    def merge(self, other):
+    def merge(self, other: 'CardinalityEstimator'):
         pass
 
     @abstractmethod
@@ -197,16 +197,132 @@ class PCSASketch(CardinalityEstimator):
         return PCSASketch(self.b, array('Q', M))
 
 
+def l_func_first_derivative(n, T: List[List[int]], p: float, q: float):
+    l = 0
+
+    for i in range(len(T)):
+        for j in range(len(T[0])):
+            pho_ij = (2 ** -j) / len(T)
+            gamma_j = 1 - pho_ij
+            gamma_j_n = gamma_j ** n
+
+            if not T[i][j]:
+                l += ((p - q) * gamma_j_n * log(gamma_j)) / (1 - p + (p - q) * gamma_j_n)
+            else:
+                l -= ((p - q) * gamma_j_n * log(gamma_j)) / (p - (p - q) * gamma_j_n)
+
+    return l
+
+
+def l_func_second_derivative(n, T: List[List[int]], p: float, q: float):
+    l = 0
+
+    for i in range(len(T)):
+        for j in range(len(T[0])):
+            pho_ij = (2 ** -j) / len(T)
+            gamma_j = 1 - pho_ij
+            gamma_j_n = gamma_j ** n
+
+            if not T[i][j]:
+                l += ((1 - p) * (p - q) * gamma_j_n * (log(gamma_j) ** 2)) / ((1 - p + (p - q) * gamma_j_n) ** 2)
+            else:
+                l -= (p * (p - q) * gamma_j_n * (log(gamma_j) ** 2)) / ((p - (p - q) * gamma_j_n) ** 2)
+
+    return l
+
+
+class SketchFlipMerge:
+    BITMAP_LENGTH = 32
+    NEWTON_ITERS = 10
+
+    def __init__(self, b: int, p: float, M: Optional[array] = None):
+        self.b = b
+        self.m = 2 ** self.b
+
+        if p < 0 or p > 1:
+            raise ValueError(f'p parameter must be between 0 and 1 (p={p})')
+
+        self.p = p
+        self.q = 1 - self.p
+
+        if M is None:
+            # Equivalent to an unsigned long array in C
+            self.M = array('L', (0 for _ in range(self.m)))
+        else:
+            self.M = M
+
+    def get_index(self, hash_result: int):
+        mask = 0
+
+        for mask_idx in range(self.b):
+            mask |= 1 << mask_idx
+
+        return hash_result & mask
+
+    def get_leading_zeroes(self, hash_result: int):
+        count = 0
+
+        for mask_idx in range(self.b, self.BITMAP_LENGTH):
+            if hash_result & (1 << mask_idx):
+                return count
+
+            count += 1
+
+        return count
+
+    def add(self, element: str):
+        h = mmh3.hash(element, 1, False)
+
+        index = self.get_index(h)
+        value = self.get_leading_zeroes(h)
+
+        self.M[index] |= 1 << value
+
+    def estimate(self):
+        n = 1
+
+        T = []
+
+        for bitmap in self.M:
+            new_row = []
+
+            for i in range(self.b):
+                new_row.append(1 if bitmap & (1 << i) else 0)
+
+            T.append(new_row)
+
+        for _ in range(self.NEWTON_ITERS):
+            n = n - l_func_first_derivative(n, T, self.p, self.q) / l_func_second_derivative(n, T, self.p, self.q)
+
+        return n
+
+
 if __name__ == '__main__':
-    pcsa_sketch = PCSASketch(5)
     from random import choice, randint
 
-    for _ in range(6000):
+    random_strs = []
+
+    for _ in range(322):
         random_str = ''
 
         for _ in range(randint(5, 15)):
             random_str += choice(string.ascii_letters)
 
+        if random_str not in random_strs:
+            random_strs.append(random_str)
+
+    pcsa_sketch = PCSASketch(5)
+
+    for random_str in random_strs:
         pcsa_sketch.add(random_str)
 
     print(pcsa_sketch.estimate())
+
+    sketch_flip_merge = SketchFlipMerge(12, p=1)
+
+    for random_str in random_strs:
+        sketch_flip_merge.add(random_str)
+
+    print(sketch_flip_merge.estimate())
+    print(len(random_strs))
+
