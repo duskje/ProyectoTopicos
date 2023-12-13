@@ -6,6 +6,8 @@ from enum import Enum, auto
 from functools import partial
 from typing import Optional, Callable
 
+import mmh3
+
 from cardinality_estimation import HLLSketch, PCSASketch
 
 
@@ -275,6 +277,40 @@ class TrafficGrid:
 
         return path
 
+    def find_path_using_hll_optimized(self, car_plate: str):
+        path = set()
+
+        for intersection in self.intersection_graph.keys():
+            sketch = self._intersection_to_camera_map.get(intersection).hll_sketch
+
+            h = mmh3.hash64(car_plate, 1, False)[0]
+
+            bucket = sketch.get_bucket(h)
+            value = sketch.get_value(h)
+
+            leading_zeros = sketch.leading_zeros(value)
+
+            if sketch.M[bucket] >= leading_zeros + 1:
+                path.add(intersection)
+
+        return path
+
+    def find_path_using_pcsa_optimized(self, car_plate: str):
+        path = set()
+
+        for intersection in self.intersection_graph.keys():
+            sketch = self._intersection_to_camera_map.get(intersection).pcsa_sketch
+
+            h = mmh3.hash(car_plate, 1, False)
+
+            index = sketch.get_index(h)
+            value = sketch.get_leading_zeroes(h)
+
+            if sketch.M[index] & (1 << value):
+                path.add(intersection)
+
+        return path
+
 
 if __name__ == '__main__':
     grid = TrafficGrid(generate_intersection_graph(), init_p=20, init_b=12)
@@ -298,29 +334,39 @@ if __name__ == '__main__':
         Intersection('salas', 'freire'),
     ]
 
-    import json
-    json_path = {'path': []}
-    for json_intersection in (asdict(intersection) for intersection in path):
-        json_path['path'].append(json_intersection)
-
-    print(json.dumps(json_path, indent=2))
+#    import json
+#    json_path = {'path': []}
+#    for json_intersection in (asdict(intersection) for intersection in path):
+#        json_path['path'].append(json_intersection)
+#
+#    print(json.dumps(json_path, indent=2))
 
     grid.insert_path('AA-AA-AA', path)
-    path_found = grid.find_path_for_plate('AA-AA-AA', 'HLL')
-    raw_path_found = grid.find_path_for_plate_raw_sketch('AA-AA-AA', 'HLL')
-    print('path found (hll): ', path_found)
-    print('path found (hll, raw)', raw_path_found)
 
+    path_found = grid.find_path_for_plate('AA-AA-AA', 'HLL')
     spurious_intersections = path_found.difference(path)
+    print('path found (hll): ', path_found)
     print(f'spurious intersections ({len(spurious_intersections)}, HLL) {spurious_intersections}')
+
+    raw_path_found = grid.find_path_for_plate_raw_sketch('AA-AA-AA', 'HLL')
     raw_suprious_intersections = raw_path_found.difference(path)
+    print('path found (hll, raw)', raw_path_found)
     print(f'spurious intersections ({len(raw_suprious_intersections)}, HLL, raw) {raw_suprious_intersections}')
 
-    path_found = grid.find_path_for_plate('AA-AA-AA', 'PCSA')
-    print('path found (pcsa): ', path_found)
+    optimized_hll_path_found = grid.find_path_using_hll_optimized('AA-AA-AA')
+    spurious_intersections = optimized_hll_path_found.difference(path)
+    print('path found (hll, optimized)', optimized_hll_path_found)
+    print(f'spurious intersections ({len(spurious_intersections)}, HLL, optimized) {spurious_intersections}')
 
+    path_found = grid.find_path_for_plate('AA-AA-AA', 'PCSA')
     spurious_intersections = path_found.difference(path)
+    print('path found (PCSA): ', path_found)
     print(f'spurious intersections ({len(spurious_intersections)}, PCSA) {spurious_intersections}')
+
+    optimized_pcsa_path_found = grid.find_path_using_pcsa_optimized('AA-AA-AA')
+    spurious_intersections = optimized_pcsa_path_found.difference(path)
+    print('path found (PCSA, optimized): ', optimized_pcsa_path_found)
+    print(f'spurious intersections ({len(spurious_intersections)}, PCSA, optimized) {spurious_intersections}')
 
     print('real cardinality', grid.real_cardinality_for_intersection(intersection))
     print('hll estimation', grid.hll_cardinality_for_intersection(intersection))
