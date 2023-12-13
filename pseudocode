@@ -1,0 +1,72 @@
+def estimador_tiene_elemento(elemento, estimador):
+    cardinalidad_inicial = estimador.obtener_cardinalidad()
+    estimador.insertar(elemento)
+    cardinalidad_final = estimador.obtener_cardinalidad()
+
+    return cardinalidad_final == cardinalidad_inicial
+
+
+def encontrar_camino_para_patente(patente, grafo):
+    vertices_posibles = []
+
+    for interseccion in grafo.intersecciones():
+        estimador = interseccion.estimador() # por ejemplo, una instancia de HyperLogLog
+
+        if estimador_tiene_elemento(patente, estimador):
+            vertices_posibles.append(interseccion)
+
+    return vertices_posibles
+
+
+def HLL_tiene_elemento(elemento, HLLSketch):
+    buckets = HLLSketch.buckets
+
+    h = hash(elemento)
+
+    bucket_idx = get_bucket(h)
+    value = get_value(h)
+
+    leading_zeros = leading_zeros(value)
+
+    return buckets[bucket_idx] >= leading_zeros + 1
+
+
+def PCSA_tiene_elemento(elemento, PCSA):
+    bitmaps = PCSA.bitmaps
+
+    h = hash(elemento)
+
+    bitmap_idx = get_bitmap(h)
+    value = get_value(h)
+
+    leading_zeros = leading_zeros(value)
+
+    return bitmaps[bitmap_idx] & (1 << leading_zeros)
+
+
+def recorrido_aleatorio(vertices_del_borde, distancia_minima):
+    visitados = set()
+    recorrido = []
+
+    nodo_actual = random_choice(vertices_del_borde)
+
+    while ( len(recorrido) < distancia_minima ) or ( nodo_actual no está en vertices_del_borde ):
+        if len(nodo_actual.vertices_adyacentes() que no están en visitados) == 0:
+            return recorrido
+
+        visitados.add(nodo_actual)
+        recorrido.add(nodo_actual)
+
+        nodo_siguiente = random_choice(nodo_actual.vertices_adyacentes())
+
+        while nodo_siguiente está en visitados:
+            nodo_siguiente = random_choice(nodo_actual.vertices_adyacentes())
+
+        nodo_actual = nodo_siguiente
+
+    return recorrido
+
+def insertar_recorrido(patente, intersecciones_del_recorrido, grafo):
+    for interseccion in grafo.intersecciones:
+        if interseccion está en intersecciones_del_recorrido:
+            interseccion.insertar(patente)
