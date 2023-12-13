@@ -202,7 +202,7 @@ def l_func_first_derivative(n, T: List[List[int]], p: float, q: float):
 
     for i in range(len(T)):
         for j in range(len(T[0])):
-            pho_ij = (2 ** -j) / len(T)
+            pho_ij = (2 ** (-j - 1)) / len(T)
             gamma_j = 1 - pho_ij
             gamma_j_n = gamma_j ** n
 
@@ -219,7 +219,7 @@ def l_func_second_derivative(n, T: List[List[int]], p: float, q: float):
 
     for i in range(len(T)):
         for j in range(len(T[0])):
-            pho_ij = (2 ** -j) / len(T)
+            pho_ij = (2 ** (-j - 1)) / len(T)
             gamma_j = 1 - pho_ij
             gamma_j_n = gamma_j ** n
 
@@ -233,7 +233,7 @@ def l_func_second_derivative(n, T: List[List[int]], p: float, q: float):
 
 class SketchFlipMerge:
     BITMAP_LENGTH = 32
-    NEWTON_ITERS = 10
+    NEWTON_ITERS = 200
 
     def __init__(self, b: int, p: float, M: Optional[array] = None):
         self.b = b
@@ -248,6 +248,10 @@ class SketchFlipMerge:
         if M is None:
             # Equivalent to an unsigned long array in C
             self.M = array('L', (0 for _ in range(self.m)))
+
+            for bitmap in self.M:
+                for value_idx in range(self.b):
+                    bitmap |= bernoulli.rvs(self.q) << value_idx
         else:
             self.M = M
 
@@ -276,7 +280,7 @@ class SketchFlipMerge:
         index = self.get_index(h)
         value = self.get_leading_zeroes(h)
 
-        self.M[index] |= 1 << value
+        self.M[index] |= bernoulli.rvs(self.p) << value
 
     def estimate(self):
         n = 1
@@ -294,7 +298,7 @@ class SketchFlipMerge:
         for _ in range(self.NEWTON_ITERS):
             n = n - l_func_first_derivative(n, T, self.p, self.q) / l_func_second_derivative(n, T, self.p, self.q)
 
-        return n
+        return int(n)
 
 
 if __name__ == '__main__':
@@ -302,7 +306,7 @@ if __name__ == '__main__':
 
     random_strs = []
 
-    for _ in range(322):
+    for _ in range(50000):
         random_str = ''
 
         for _ in range(randint(5, 15)):
@@ -311,14 +315,14 @@ if __name__ == '__main__':
         if random_str not in random_strs:
             random_strs.append(random_str)
 
-    pcsa_sketch = PCSASketch(5)
+    pcsa_sketch = PCSASketch(8)
 
     for random_str in random_strs:
         pcsa_sketch.add(random_str)
 
     print(pcsa_sketch.estimate())
 
-    sketch_flip_merge = SketchFlipMerge(12, p=1)
+    sketch_flip_merge = SketchFlipMerge(8, p=1)
 
     for random_str in random_strs:
         sketch_flip_merge.add(random_str)
