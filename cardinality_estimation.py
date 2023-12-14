@@ -1,3 +1,4 @@
+import decimal
 import string
 from abc import ABC, abstractmethod
 from array import array
@@ -173,8 +174,10 @@ class PCSASketch(CardinalityEstimator):
         count = 0
 
         for mask_idx in range(self.BITMAP_LENGTH):
-            if bitmap & (1 << mask_idx):
-                count += 1
+            if not bitmap & (1 << mask_idx):
+                return count
+
+            count += 1
 
         return count
 
@@ -233,7 +236,7 @@ def l_func_second_derivative(n, T: List[List[int]], p: float, q: float):
 
 class SketchFlipMerge:
     BITMAP_LENGTH = 32
-    NEWTON_ITERS = 200
+    NEWTON_ITERS = 20
 
     def __init__(self, b: int, p: float, M: Optional[array] = None):
         self.b = b
@@ -282,8 +285,19 @@ class SketchFlipMerge:
 
         self.M[index] |= bernoulli.rvs(self.p) << value
 
+#        last_value = self.M[index] << value
+#
+#        mask = 0
+#
+#        for bit_idx in range(self.BITMAP_LENGTH):
+#            if bit_idx != value:
+#                mask |= 1 << bit_idx
+#
+#        self.M[index] &= mask
+#        self.M[index] |= (last_value) ^ (bernoulli.rvs(self.p) << value)
+
     def estimate(self):
-        n = 1
+        n = 100
 
         T = []
 
@@ -296,7 +310,13 @@ class SketchFlipMerge:
             T.append(new_row)
 
         for _ in range(self.NEWTON_ITERS):
-            n = n - l_func_first_derivative(n, T, self.p, self.q) / l_func_second_derivative(n, T, self.p, self.q)
+            f_second_derivative = l_func_second_derivative(n, T, self.p, self.q)
+
+            if f_second_derivative == 0:
+                return 0
+
+            f_first_derivative = l_func_first_derivative(n, T, self.p, self.q)
+            n = n - f_first_derivative / f_second_derivative
 
         return int(n)
 
@@ -306,7 +326,7 @@ if __name__ == '__main__':
 
     random_strs = []
 
-    for _ in range(50000):
+    for _ in range(5000):
         random_str = ''
 
         for _ in range(randint(5, 15)):
@@ -322,7 +342,7 @@ if __name__ == '__main__':
 
     print(pcsa_sketch.estimate())
 
-    sketch_flip_merge = SketchFlipMerge(8, p=1)
+    sketch_flip_merge = SketchFlipMerge(8, p=0.85)
 
     for random_str in random_strs:
         sketch_flip_merge.add(random_str)

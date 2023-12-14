@@ -70,3 +70,56 @@ def insertar_recorrido(patente, intersecciones_del_recorrido, grafo):
     for interseccion in grafo.intersecciones:
         if interseccion está en intersecciones_del_recorrido:
             interseccion.insertar(patente)
+
+def error(intersecciones_obtenidas, intersecciones_camino_real):
+    return len(intersecciones_obtenidas.diferencia(intersecciones_camino_real))
+
+
+def l_func_first_derivative(n, bitmaps, p, q):
+    l = 0
+
+    for bitmap in bitmaps:
+        for j in range(BITMAP_LENGTH):
+            pho_ij = (2 ** -(j + 1)) / len(bitmaps)
+            gamma_j = 1 - pho_ij
+            gamma_j_n = gamma_j ** n
+
+            if not b:
+                l += ((p - q) * gamma_j_n * log(gamma_j)) / (1 - p + (p - q) * gamma_j_n)
+            else:
+                l -= ((p - q) * gamma_j_n * log(gamma_j)) / (p - (p - q) * gamma_j_n)
+
+    return l
+
+def estimacion_sketch_flip_merge(sketch_flip_merge):
+    n = 100 # Estimacion inicial
+    p = sketch_flip_merge.p
+    q = 1 - p
+
+    for _ in range(NEWTON_ITERS):
+        f_second_derivative = l_func_second_derivative(n, T, p, q)
+
+        if f_second_derivative == 0:
+            return 0
+
+        f_first_derivative = l_func_first_derivative(n, T, p, q)
+        n = n - f_first_derivative / f_second_derivative
+
+    return n
+
+def inicialización_sketch_flip_merge(sketch_flip_merge):
+    p = sketch_flip_merge.p
+    q = 1 - p
+
+    for bitmap in sketch_flip_merge.bitmaps:
+        for value_idx in range(BITMAP_LENGTH):
+            bitmap |= bernoulli(q) << value
+
+def insercion_sketch_flip_merge(elemento, sketch_flip_merge):
+    p = sketch_flip_merge.p
+    h = hash(elemento)
+
+    index = self.get_index(h)
+    value = self.get_leading_zeroes(h)
+
+    self.bitmaps[index] |= (bernoulli(p) << value)

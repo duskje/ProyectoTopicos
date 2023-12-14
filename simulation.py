@@ -4,11 +4,13 @@ from copy import deepcopy
 from dataclasses import dataclass, field, asdict
 from enum import Enum, auto
 from functools import partial
-from typing import Optional, Callable
+from typing import Optional, Callable, Iterable
+import time
 
 import mmh3
+from matplotlib import pyplot as plt
 
-from cardinality_estimation import HLLSketch, PCSASketch
+from cardinality_estimation import HLLSketch, PCSASketch, SketchFlipMerge
 
 
 @dataclass
@@ -21,6 +23,7 @@ class Path:
 class Camera:
     hll_sketch: HLLSketch
     pcsa_sketch: PCSASketch
+    sketch_flip_merge: SketchFlipMerge
 
     _seen: set[str] = field(default_factory=set)
 
@@ -30,7 +33,11 @@ class Camera:
 
     @property
     def pcsa_sketch_count(self):
-        return self.hll_sketch.estimate()
+        return self.pcsa_sketch.estimate()
+
+    @property
+    def sfm_count(self):
+        return self.sketch_flip_merge.estimate()
 
     @property
     def real_count(self):
@@ -40,6 +47,7 @@ class Camera:
         self._seen.add(car_plate)
         self.hll_sketch.add(car_plate)
         self.pcsa_sketch.add(car_plate)
+        self.sketch_flip_merge.add(car_plate)
 
 
 @dataclass(frozen=True)
@@ -113,13 +121,21 @@ class RandomFlow:
 
 
 class TrafficGrid:
-    def __init__(self, intersection_graph: dict[Intersection, list[Intersection]], init_p: int = 14, init_b: int = 5):
+    def __init__(
+            self,
+            intersection_graph: dict[Intersection, list[Intersection]],
+            init_p: int = 14,
+            init_b: int = 8,
+            probability: float = 1
+    ):
         self.intersection_graph = intersection_graph
 
         self._intersection_to_camera_map: dict[Intersection, Camera] = {}
 
         for intersection in self.intersection_graph.keys():
-            self._intersection_to_camera_map[intersection] = Camera(HLLSketch(p=init_p), PCSASketch(b=init_b))
+            self._intersection_to_camera_map[intersection] = Camera(HLLSketch(p=init_p),
+                                                                    PCSASketch(b=init_b),
+                                                                    SketchFlipMerge(b=init_b, p=probability))
 
         self._already_added = set()
 
@@ -153,8 +169,8 @@ class TrafficGrid:
     def is_dead_end(node: Intersection, graph: dict, visited):
         # If for the next node, all of its neighbours were already visited before, we'll probably be stuck at a dead-end
 
-        next_node_adyacent_nodes = set(graph[node])
-        return next_node_adyacent_nodes.intersection(visited) == next_node_adyacent_nodes
+        next_node_adjacent_nodes = set(graph[node])
+        return next_node_adjacent_nodes.intersection(visited) == next_node_adjacent_nodes
 
     @staticmethod
     def generate_random_walk(graph: dict,
@@ -230,6 +246,9 @@ class TrafficGrid:
     def pcsa_cardinality_for_intersection(self, intersection: Intersection) -> int:
         return self._intersection_to_camera_map.get(intersection).pcsa_sketch_count
 
+    def sfm_cardinality_for_intersection(self, intersection: Intersection) -> int:
+        return self._intersection_to_camera_map.get(intersection).sfm_count
+
     def run_simulation(self, known_paths: list[Path], random_flow_parameters, static_flow_parameters):
         pass
 
@@ -241,6 +260,8 @@ class TrafficGrid:
                 sketch_copy = deepcopy(self._intersection_to_camera_map.get(intersection).hll_sketch)
             elif sketch == 'PCSA':
                 sketch_copy = deepcopy(self._intersection_to_camera_map.get(intersection).pcsa_sketch)
+            elif sketch == 'SFM':
+                sketch_copy = deepcopy(self._intersection_to_camera_map.get(intersection).sketch_flip_merge)
             else:
                 raise TypeError
 
@@ -252,28 +273,6 @@ class TrafficGrid:
 
             if cardinality_after_add == cardinality_before_add:
                 path.add(intersection)
-
-        return path
-
-    def find_path_for_plate_raw_sketch(self, car_plate: str, sketch: str):
-        path = set()
-
-        for intersection in self.intersection_graph.keys():
-            if sketch == 'HLL':
-                sketch_copy = deepcopy(self._intersection_to_camera_map.get(intersection).hll_sketch)
-            elif sketch == 'PCSA':
-                sketch_copy = deepcopy(self._intersection_to_camera_map.get(intersection).pcsa_sketch)
-            else:
-                raise TypeError
-
-            M = deepcopy(sketch_copy.M)
-
-            sketch_copy.add(car_plate)
-
-            for bucket_pre_add, bucket_post_add in zip(M, sketch_copy.M):
-                if bucket_pre_add != bucket_post_add:
-                    path.add(intersection)
-                    break
 
         return path
 
@@ -312,13 +311,159 @@ class TrafficGrid:
         return path
 
 
-if __name__ == '__main__':
-    grid = TrafficGrid(generate_intersection_graph(), init_p=20, init_b=12)
+def compare_pcsa_sfm(iters: int = 10):
+    path = [
+        Intersection('prat', 'heras'),
+        Intersection('heras', 'serrano'),
+        Intersection('serrano', 'carrera'),
+        Intersection('serrano', 'maipu'),
+        Intersection('serrano', 'freire'),
+        Intersection('salas', 'freire'),
+    ]
+    
+    results_pcsa = []
+    results_fsm = []
 
-    print(grid.intersection_graph[Intersection('rozas', 'serrano')])
-    print(grid.all_intersections_including_street('rozas'))
-    print(generate_random_car_plate())
-    print(grid.get_frontiers())
+    mean_spur_pcsa = []
+    mean_spur_sfm = []
+
+    mae_pcsa = []
+    mae_sfm = []
+
+    for b in range(4, 10):
+        print(f'Current b: {b}')
+
+        time_pcsa = 0
+        time_sfm = 0
+
+        pcsa_spur = 0
+        sfm_spur = 0
+
+        pcsa_error = 0
+        sfm_error = 0
+
+        for i in range(iters):
+            print(f'Current iter: {i}')
+
+            grid = TrafficGrid(generate_intersection_graph(), init_p=5, init_b=b, probability=0.85)
+            grid.generate_random_flow(3000)
+            grid.insert_path('AA-AA-AA', path)
+
+            print(f'Finding path for pcsa')
+
+            start = time.time()
+            path_found = grid.find_path_using_pcsa_optimized('AA-AA-AA')
+            time_pcsa += time.time() - start
+
+            pcsa_spur += len(path_found.difference(path))
+
+            print(f'Finding path for fsm')
+
+            start = time.time()
+            path_found = grid.find_path_for_plate('AA-AA-AA', 'SFM')
+            time_sfm += time.time() - start
+
+            sfm_spur += len(path_found.difference(path))
+
+            intersection = grid.all_intersections_including_street('salas')[0]
+
+            real_cardinality = grid.real_cardinality_for_intersection(intersection)
+            pcsa_estimation = grid.pcsa_cardinality_for_intersection(intersection)
+            sfm_estimation = grid.sfm_cardinality_for_intersection(intersection)
+
+            pcsa_error = abs(pcsa_estimation - real_cardinality)
+            sfm_error = abs(sfm_estimation - real_cardinality)
+
+        mae_pcsa.append( (b, pcsa_error / iters) )
+        mae_sfm.append( (b, sfm_error / iters) )
+
+        mean_spur_pcsa.append( (b, pcsa_spur / iters) )
+        mean_spur_sfm.append( (b, sfm_spur / iters) )
+
+        results_pcsa.append( (b, time_pcsa / iters) )
+        results_fsm.append( (b, time_sfm / iters) )
+
+    with open('plot/time_pcsa.dat', 'w') as f:
+        for b, t in results_pcsa:
+            f.write(f'{b} {t}\n')
+
+    with open('plot/time_sfm.dat', 'w') as f:
+        for b, t in results_fsm:
+            f.write(f'{b} {t}\n')
+
+    with open('plot/error_pcsa.dat', 'w') as f:
+        for b, mae in mae_pcsa:
+            f.write(f'{b} {mae}\n')
+
+    with open('plot/error_sfm.dat', 'w') as f:
+        for b, mae in mae_sfm:
+            f.write(f'{b} {mae}\n')
+
+    with open('plot/mean_spur_pcsa.dat', 'w') as f:
+        for b, spur in mean_spur_pcsa:
+            f.write(f'{b} {spur}\n')
+
+    with open('plot/mean_spur_sfm.dat', 'w') as f:
+        for b, spur in mean_spur_sfm:
+            f.write(f'{b} {spur}\n')
+
+
+#if __name__ == '__main__':
+#    compare_pcsa_sfm()
+
+
+def intersections_as_grid(intersections: Iterable[Intersection]):
+    vertical_streets = ['anibal_pinto', 'capuolican', 'rengo', 'lincoyan', 'angol', 'salas', 'serrano', 'prat']
+    horizontal_streets = ['rozas', 'heras', 'carrera', 'maipu', 'freire', 'barros', 'ohiggins']
+
+    points = []
+
+    for i, vertical_street in enumerate(vertical_streets):
+        for j, horizontal_street in enumerate(horizontal_streets):
+            if Intersection(vertical_street, horizontal_street) in intersections:
+                points.append((i, j))
+
+    return points
+
+
+def plot_pcsa(points_real, points_pcsa):
+    plt.plot([p for p, _ in points_pcsa], [spur for _, spur in points_pcsa], marker='o', linestyle='')
+    plt.plot([p for p, _ in points_real], [spur for _, spur in points_real], marker='o', linestyle='', alpha=.6)
+    plt.legend(['PCSA b=9', 'Real'])
+    plt.grid(True)
+    plt.xlim([0, 7])
+    plt.ylim([0, 6])
+    plt.savefig('plot_pcsa.png')
+    plt.close()
+
+def plot_sfm(points_real, points_sfm):
+    plt.plot([p for p, _ in points_sfm], [spur for _, spur in points_sfm], marker='o', linestyle='')
+    plt.plot([p for p, _ in points_real], [spur for _, spur in points_real], marker='o', linestyle='', alpha=.6)
+    plt.legend(['SFM b=9 p=0.8', 'Real'])
+    plt.grid(True)
+    plt.xlim([0, 7])
+    plt.ylim([0, 6])
+    plt.savefig('plot_sfm.png')
+    plt.close()
+
+def plot_hll(points_real, points_hll):
+    plt.plot([p for p, _ in points_hll], [spur for _, spur in points_hll], marker='o', linestyle='')
+    plt.plot([p for p, _ in points_real], [spur for _, spur in points_real], marker='o', linestyle='', alpha=.6)
+    plt.legend(['HLL p=12', 'Real'])
+    plt.grid(True)
+    plt.xlim([0, 7])
+    plt.ylim([0, 6])
+    plt.savefig('plot.hll.png')
+    plt.close()
+
+
+if __name__ == '__main__':
+    grid = TrafficGrid(generate_intersection_graph(), init_p=12, init_b=9, probability=0.8)
+
+    # print(grid.intersection_graph[Intersection('rozas', 'serrano')])
+    # print(grid.all_intersections_including_street('rozas'))
+    # print(generate_random_car_plate())
+    # print(grid.get_frontiers())
 
     grid.generate_static_flow_on_street('carrera', 15000)
     grid.generate_static_flow_on_street('prat', 5000)
@@ -343,33 +488,43 @@ if __name__ == '__main__':
 
     grid.insert_path('AA-AA-AA', path)
 
-    path_found = grid.find_path_for_plate('AA-AA-AA', 'HLL')
+    #path_found = grid.find_path_for_plate('AA-AA-AA', 'HLL')
+    #spurious_intersections = path_found.difference(path)
+    #print('path found (hll): ', path_found)
+    #print(f'spurious intersections ({len(spurious_intersections)}, HLL) {spurious_intersections}')
+
+    #path_found = grid.find_path_for_plate('AA-AA-AA', 'PCSA')
+    #spurious_intersections = path_found.difference(path)
+    #print('path found (PCSA): ', path_found)
+    #print(f'spurious intersections ({len(spurious_intersections)}, PCSA) {spurious_intersections}')
+
+    path_found = grid.find_path_for_plate('AA-AA-AA', 'SFM')
     spurious_intersections = path_found.difference(path)
-    print('path found (hll): ', path_found)
-    print(f'spurious intersections ({len(spurious_intersections)}, HLL) {spurious_intersections}')
+    print('path found (SFM)', path_found)
+    print(f'spurious intersections ({len(spurious_intersections)}, SFM) {spurious_intersections}')
 
-    raw_path_found = grid.find_path_for_plate_raw_sketch('AA-AA-AA', 'HLL')
-    raw_suprious_intersections = raw_path_found.difference(path)
-    print('path found (hll, raw)', raw_path_found)
-    print(f'spurious intersections ({len(raw_suprious_intersections)}, HLL, raw) {raw_suprious_intersections}')
-
-    optimized_hll_path_found = grid.find_path_using_hll_optimized('AA-AA-AA')
+    optimized_hll_path_found = grid.find_path_for_plate('AA-AA-AA', 'HLL')
     spurious_intersections = optimized_hll_path_found.difference(path)
     print('path found (hll, optimized)', optimized_hll_path_found)
     print(f'spurious intersections ({len(spurious_intersections)}, HLL, optimized) {spurious_intersections}')
-
-    path_found = grid.find_path_for_plate('AA-AA-AA', 'PCSA')
-    spurious_intersections = path_found.difference(path)
-    print('path found (PCSA): ', path_found)
-    print(f'spurious intersections ({len(spurious_intersections)}, PCSA) {spurious_intersections}')
 
     optimized_pcsa_path_found = grid.find_path_using_pcsa_optimized('AA-AA-AA')
     spurious_intersections = optimized_pcsa_path_found.difference(path)
     print('path found (PCSA, optimized): ', optimized_pcsa_path_found)
     print(f'spurious intersections ({len(spurious_intersections)}, PCSA, optimized) {spurious_intersections}')
 
-    print('real cardinality', grid.real_cardinality_for_intersection(intersection))
+    plot_pcsa(points_real=intersections_as_grid(path),
+              points_pcsa=intersections_as_grid(optimized_pcsa_path_found))
+
+    plot_hll(points_real=intersections_as_grid(path),
+             points_hll=intersections_as_grid(optimized_hll_path_found))
+
+    plot_sfm(points_real=intersections_as_grid(path),
+             points_sfm=intersections_as_grid(path_found))
+
     print('hll estimation', grid.hll_cardinality_for_intersection(intersection))
+    print('real cardinality', grid.real_cardinality_for_intersection(intersection))
     print('pcsa estimation', grid.pcsa_cardinality_for_intersection(intersection))
+    print('sfm estimation', grid.sfm_cardinality_for_intersection(intersection))
     print('carrera-serrano cardinality', grid.real_cardinality_for_intersection(Intersection('carrera', 'serrano')))
 
