@@ -1,10 +1,10 @@
-import decimal
 import string
 from abc import ABC, abstractmethod
 from array import array
 from enum import Enum, auto
 from math import log
 from typing import Iterable, Optional, List
+
 from scipy.stats import bernoulli
 
 import mmh3
@@ -191,7 +191,7 @@ class PCSASketch(CardinalityEstimator):
 
         return int((self.m / self.PHI) * (2 ** average_least_significant_zeros))
 
-    def merge(self, other):
+    def merge(self, other: 'PCSASketch'):
         M = []
 
         for this_bitmap, other_bitmap in zip(self.M, other.M):
@@ -236,7 +236,7 @@ def l_func_second_derivative(n, T: List[List[int]], p: float, q: float):
 
 class SketchFlipMerge:
     BITMAP_LENGTH = 32
-    NEWTON_ITERS = 20
+    NEWTON_ITERS = 50
 
     def __init__(self, b: int, p: float, M: Optional[array] = None):
         self.b = b
@@ -257,6 +257,9 @@ class SketchFlipMerge:
                     bitmap |= bernoulli.rvs(self.q) << value_idx
         else:
             self.M = M
+
+        self._count = 0
+        self._first_guess = 1
 
     def get_index(self, hash_result: int):
         mask = 0
@@ -285,19 +288,15 @@ class SketchFlipMerge:
 
         self.M[index] |= bernoulli.rvs(self.p) << value
 
-#        last_value = self.M[index] << value
-#
-#        mask = 0
-#
-#        for bit_idx in range(self.BITMAP_LENGTH):
-#            if bit_idx != value:
-#                mask |= 1 << bit_idx
-#
-#        self.M[index] &= mask
-#        self.M[index] |= (last_value) ^ (bernoulli.rvs(self.p) << value)
+#        if self._count > 500:
+#            self._count = 0
+#            self._first_guess = self.estimate()
+#        else:
+#            self._count += 1
 
     def estimate(self):
-        n = 100
+        n = 1
+#        n = self._first_guess
 
         T = []
 
@@ -349,4 +348,3 @@ if __name__ == '__main__':
 
     print(sketch_flip_merge.estimate())
     print(len(random_strs))
-
