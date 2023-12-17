@@ -1,8 +1,23 @@
-# Semestral Project "Tópicos en Manejo de Grandes Volúmenes de Datos"
-## Motivation
+# Proyecto semestral "Tópicos en Manejo de Grandes Volúmenes de Datos"
+## Requisitos
+Para ejecutar este proyecto es necesario tener `poetry` y al menos Python 3.11.
 
-## How-To
+## Instalación
+Creamos un entorno virtual para el proyecto con poetry.
 
-## Results
+```bash
+git clone https://github.com/duskje/ProyectoTopicos
+cd ProyectoTopicos
+poetry install
+```
 
-## References
+## Tests
+Para ejecutar los tests para los estimadores de cardinalidad
+
+```bash
+poetry run pytest test_cardinality_estimation
+```
+
+## Referencias
+[1]
+[2]
