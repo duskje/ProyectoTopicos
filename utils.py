@@ -4,7 +4,7 @@ import random
 import mmh3
 
 
-def generate_random_car_plate(exclude):
+def generate_random_car_plate(exclude) -> str:
     result = ''
 
     while not result or result in exclude:
@@ -30,6 +30,7 @@ def find_leading_zeros_for_hll(value: int, p: int):
         count += 1
 
     return count
+
 
 if __name__ == '__main__':
     h = mmh3.hash64('AA-AA-AA', 1, False)[0]
