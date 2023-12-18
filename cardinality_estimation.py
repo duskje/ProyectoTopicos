@@ -234,7 +234,7 @@ def l_func_second_derivative(n, T: List[List[int]], p: float, q: float):
     return l
 
 
-class SketchFlipMerge:
+class SketchFlipMerge(CardinalityEstimator):
     BITMAP_LENGTH = 32
     NEWTON_ITERS = 50
 
@@ -318,6 +318,9 @@ class SketchFlipMerge:
             n = n - f_first_derivative / f_second_derivative
 
         return int(n)
+
+    def merge(self, other: 'SketchFlipMerge'):
+        raise NotImplemented
 
 
 if __name__ == '__main__':
