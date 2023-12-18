@@ -10,7 +10,7 @@ import time
 import mmh3
 from matplotlib import pyplot as plt
 
-from cardinality_estimation import HLLSketch, PCSASketch, SketchFlipMerge
+from cardinality_estimation import HLLSketch, PCSASketch, SketchFlipMerge, CardinalityEstimator
 from utils import generate_random_car_plate
 
 
@@ -68,8 +68,10 @@ class Intersection:
 
 
 def generate_intersection_graph() -> dict[Intersection]:
-    vertical_streets = ['anibal_pinto', 'capuolican', 'rengo', 'lincoyan', 'angol', 'salas', 'serrano', 'prat']
-    horizontal_streets = ['rozas', 'heras', 'carrera', 'maipu', 'freire', 'barros', 'ohiggins']
+    horizontal_streets = list(reversed(['anibal_pinto', 'caupolican', 'rengo', 'lincoyan', 'angol', 'salas', 'serrano', 'prat']))
+    horizontal_streets_direction = list(reversed(['right', 'left', 'right', 'left', 'right', 'left', 'right', 'left']))
+    vertical_streets = ['rozas', 'heras', 'carrera', 'maipu', 'freire', 'barros', 'ohiggins']
+    vertical_streets_direction = ['down', 'up', 'up_down', 'up', 'down', 'up', 'up_down']
 
     intersection_graph = dict()
 
@@ -78,21 +80,21 @@ def generate_intersection_graph() -> dict[Intersection]:
             new_intersection = Intersection(vertical_street, horizontal_street)
             intersection_graph[new_intersection] = []
 
-            if i > 0:
-                upper_intersection = Intersection(vertical_streets[i - 1], horizontal_street)
-                intersection_graph[new_intersection].append(upper_intersection)
+            if i > 0 and horizontal_streets_direction[j] == 'left':
+                lef_intersection = Intersection(vertical_streets[i - 1], horizontal_street)
+                intersection_graph[new_intersection].append(lef_intersection)
 
-            if i < len(vertical_streets) - 1:
-                lower_intersection = Intersection(vertical_streets[i + 1], horizontal_street)
+            if i < len(vertical_streets) - 1 and horizontal_streets_direction[j] == 'right':
+                rig_intersection = Intersection(vertical_streets[i + 1], horizontal_street)
+                intersection_graph[new_intersection].append(rig_intersection)
+
+            if j > 0 and vertical_streets_direction[i] in ('down', 'up_down'):
+                lower_intersection = Intersection(vertical_street, horizontal_streets[j - 1])
                 intersection_graph[new_intersection].append(lower_intersection)
 
-            if j > 0:
-                left_intersection = Intersection(vertical_street, horizontal_streets[j - 1])
-                intersection_graph[new_intersection].append(left_intersection)
-
-            if j < len(horizontal_streets) - 1:
-                right_intersection = Intersection(vertical_street, horizontal_streets[j + 1])
-                intersection_graph[new_intersection].append(right_intersection)
+            if j < len(horizontal_streets) - 1 and vertical_streets_direction[i] in ('up', 'up_down'):
+                upper_intersection = Intersection(vertical_street, horizontal_streets[j + 1])
+                intersection_graph[new_intersection].append(upper_intersection)
 
     return intersection_graph
 
@@ -101,18 +103,18 @@ class TrafficGrid:
     def __init__(
             self,
             intersection_graph: dict[Intersection, list[Intersection]],
-            init_p: int = 14,
-            init_b: int = 8,
-            probability: float = 1
+            sketch: CardinalityEstimator,
     ):
         self.intersection_graph = intersection_graph
 
-        self._intersection_to_camera_map: dict[Intersection, Camera] = {}
+        self._sketch = sketch
+
+        self._intersection_to_sketch_map: dict[Intersection, CardinalityEstimator] = {}
+        self._intersection_to_count_map: dict[Intersection, set] = {}
 
         for intersection in self.intersection_graph.keys():
-            self._intersection_to_camera_map[intersection] = Camera(HLLSketch(p=init_p),
-                                                                    PCSASketch(b=init_b),
-                                                                    SketchFlipMerge(b=init_b, p=probability))
+            self._intersection_to_sketch_map[intersection] = deepcopy(self._sketch)
+            self._intersection_to_count_map[intersection] = set()
 
         self._already_added = set()
 
@@ -149,8 +151,17 @@ class TrafficGrid:
         next_node_adjacent_nodes = set(graph[node])
         return next_node_adjacent_nodes.intersection(visited) == next_node_adjacent_nodes
 
-    @staticmethod
-    def generate_random_walk(graph: dict,
+    def has_a_viable_neighbour(self, node: Intersection, visited) -> bool:
+        neighbours = self.intersection_graph[node]
+
+        for intersection in neighbours:
+            if intersection not in visited and self.intersection_graph[intersection]:
+                return True
+
+        return False
+
+    def generate_random_walk(self,
+                             graph: dict,
                              starting_node: Intersection,
                              ending_condition: Callable,
                              min_path_len: int = 3) -> list[Intersection]:
@@ -163,7 +174,7 @@ class TrafficGrid:
         current_node = starting_node
 
         # We'll want to have at least a couple of intersections per walk
-        while current_path_len < min_path_len or not ending_condition(current_node):
+        while (current_path_len < min_path_len or not ending_condition(current_node)):
             next_node = random.choice(graph[current_node])
 
             # Prevent a cycles and dead-ends
@@ -172,6 +183,9 @@ class TrafficGrid:
                 visited_neighbouring_nodes = len(set(graph[current_node]).intersection(already_visited))
 
                 if neighbouring_nodes - visited_neighbouring_nodes < 2:
+                    return traversed_intersections
+
+                if self.has_a_viable_neighbour(current_node, already_visited):
                     return traversed_intersections
 
                 next_node = random.choice(graph[current_node])
@@ -189,15 +203,18 @@ class TrafficGrid:
 
         for _ in range(cardinality):
             new_car_plate = generate_random_car_plate(exclude=exclude)
-            starting_intersection = random.choice(list(frontiers))  # Start at a random frontier intersection
+            # Start from a border vertex that has a non-zero amount of adjacent nodes
+            starting_intersection = random.choice([intersection for intersection in frontiers if self.intersection_graph[intersection]])
 
             random_walk = self.generate_random_walk(graph=self.intersection_graph,
                                                     starting_node=starting_intersection,
                                                     ending_condition=lambda current_node: current_node in frontiers)
 
             for intersection in random_walk:
-                camera = self._intersection_to_camera_map[intersection]
-                camera.increment_count(new_car_plate)
+                self._intersection_to_count_map[intersection].add(new_car_plate)
+
+                sketch = self._intersection_to_sketch_map[intersection]
+                sketch.add(new_car_plate)
 
     def generate_static_flow_on_street(self, street: str, cardinality: int, exclude=None):
         intersections = self.all_intersections_including_street(street)
@@ -206,41 +223,32 @@ class TrafficGrid:
             new_car_plate = generate_random_car_plate(exclude=exclude)
 
             for intersection in intersections:
-                camera = self._intersection_to_camera_map[intersection]
-                camera.increment_count(new_car_plate)
+                self._intersection_to_count_map[intersection].add(new_car_plate)
+
+                sketch = self._intersection_to_sketch_map[intersection]
+                sketch.add(new_car_plate)
 
     def insert_path(self, car_plate: str, intersections: list[Intersection]):
         for intersection in intersections:
-            camera = self._intersection_to_camera_map[intersection]
-            camera.increment_count(car_plate)
+            self._intersection_to_count_map[intersection].add(car_plate)
+
+            sketch = self._intersection_to_sketch_map[intersection]
+            sketch.add(car_plate)
 
     def real_cardinality_for_intersection(self, intersection: Intersection) -> int:
-        return self._intersection_to_camera_map.get(intersection).real_count
+        return len(self._intersection_to_count_map.get(intersection))
 
-    def hll_cardinality_for_intersection(self, intersection: Intersection) -> int:
-        return self._intersection_to_camera_map.get(intersection).hll_sketch_count
-
-    def pcsa_cardinality_for_intersection(self, intersection: Intersection) -> int:
-        return self._intersection_to_camera_map.get(intersection).pcsa_sketch_count
-
-    def sfm_cardinality_for_intersection(self, intersection: Intersection) -> int:
-        return self._intersection_to_camera_map.get(intersection).sfm_count
+    def estimate_cardinality_for_intersection(self, intersection: Intersection) -> int:
+        return self._intersection_to_sketch_map.get(intersection).estimate()
 
     def run_simulation(self, known_paths: list[Path], random_flow_parameters, static_flow_parameters):
         pass
 
-    def find_path_for_plate(self, car_plate: str, sketch: str):
+    def find_path_for_plate(self, car_plate: str):
         path = set()
 
         for intersection in self.intersection_graph.keys():
-            if sketch == 'HLL':
-                sketch_copy = deepcopy(self._intersection_to_camera_map.get(intersection).hll_sketch)
-            elif sketch == 'PCSA':
-                sketch_copy = deepcopy(self._intersection_to_camera_map.get(intersection).pcsa_sketch)
-            elif sketch == 'SFM':
-                sketch_copy = deepcopy(self._intersection_to_camera_map.get(intersection).sketch_flip_merge)
-            else:
-                raise TypeError
+            sketch_copy = deepcopy(self._intersection_to_sketch_map.get(intersection))
 
             cardinality_before_add = sketch_copy.estimate()
 
@@ -254,10 +262,13 @@ class TrafficGrid:
         return path
 
     def find_path_using_hll_optimized(self, car_plate: str):
+        if not isinstance(self._sketch, HLLSketch):
+            raise ValueError(f'Only valid for self.sketch=HLLSketch, found self._sketch={type(self._sketch)}')
+
         path = set()
 
         for intersection in self.intersection_graph.keys():
-            sketch = self._intersection_to_camera_map.get(intersection).hll_sketch
+            sketch: HLLSketch = self._intersection_to_sketch_map.get(intersection)
 
             h = mmh3.hash64(car_plate, 1, False)[0]
 
@@ -272,10 +283,13 @@ class TrafficGrid:
         return path
 
     def find_path_using_pcsa_optimized(self, car_plate: str):
+        if not isinstance(self._sketch, PCSASketch):
+            raise ValueError(f'Only valid for self.sketch=PCSASketch, found self._sketch={type(self._sketch)}')
+
         path = set()
 
         for intersection in self.intersection_graph.keys():
-            sketch = self._intersection_to_camera_map.get(intersection).pcsa_sketch
+            sketch: PCSASketch = self._intersection_to_sketch_map.get(intersection)
 
             h = mmh3.hash(car_plate, 1, False)
 
@@ -288,7 +302,7 @@ class TrafficGrid:
         return path
 
 
-def compare_pcsa_sfm(iters: int = 10):
+def compare_pcsa_sfm(iters: int = 2):
     path = [
         Intersection('prat', 'heras'),
         Intersection('heras', 'serrano'),
@@ -322,9 +336,10 @@ def compare_pcsa_sfm(iters: int = 10):
         for i in range(iters):
             print(f'Current iter: {i}')
 
-            grid = TrafficGrid(generate_intersection_graph(), init_p=5, init_b=b, probability=0.85)
-            grid.generate_random_flow(3000)
-            grid.insert_path('AA-AA-AA', path)
+            grid_pcsa = TrafficGrid(intersection_graph=generate_intersection_graph(),
+                                    sketch=PCSASketch(b=b))
+            grid_pcsa.generate_random_flow(3000)
+            grid_pcsa.insert_path('AA-AA-AA', path)
 
             print(f'Finding path for pcsa')
 
@@ -336,17 +351,22 @@ def compare_pcsa_sfm(iters: int = 10):
 
             print(f'Finding path for fsm')
 
+            grid_sfm = TrafficGrid(intersection_graph=generate_intersection_graph(),
+                                   sketch=SketchFlipMerge(b=b, p=.85))
+            grid_sfm.generate_random_flow(3000)
+            grid_sfm.insert_path('AA-AA-AA', path)
+
             start = time.time()
-            path_found = grid.find_path_for_plate('AA-AA-AA', 'SFM')
+            path_found = grid_sfm.find_path_for_plate('AA-AA-AA')
             time_sfm += time.time() - start
 
             sfm_spur += len(path_found.difference(path))
 
             intersection = grid.all_intersections_including_street('salas')[0]
 
-            real_cardinality = grid.real_cardinality_for_intersection(intersection)
-            pcsa_estimation = grid.pcsa_cardinality_for_intersection(intersection)
-            sfm_estimation = grid.sfm_cardinality_for_intersection(intersection)
+            real_cardinality = grid_pcsa.real_cardinality_for_intersection(intersection)
+            pcsa_estimation = grid_pcsa.estimate_cardinality_for_intersection(intersection)
+            sfm_estimation = grid_sfm.estimate_cardinality_for_intersection(intersection)
 
             pcsa_error = abs(pcsa_estimation - real_cardinality)
             sfm_error = abs(sfm_estimation - real_cardinality)
@@ -360,33 +380,34 @@ def compare_pcsa_sfm(iters: int = 10):
         results_pcsa.append( (b, time_pcsa / iters) )
         results_fsm.append( (b, time_sfm / iters) )
 
-    with open('plot/time_pcsa.dat', 'w') as f:
+    with open('time_pcsa.dat', 'w') as f:
         for b, t in results_pcsa:
             f.write(f'{b} {t}\n')
 
-    with open('plot/time_sfm.dat', 'w') as f:
+    with open('time_sfm.dat', 'w') as f:
         for b, t in results_fsm:
             f.write(f'{b} {t}\n')
 
-    with open('plot/error_pcsa.dat', 'w') as f:
+    with open('error_pcsa.dat', 'w') as f:
         for b, mae in mae_pcsa:
             f.write(f'{b} {mae}\n')
 
-    with open('plot/error_sfm.dat', 'w') as f:
+    with open('error_sfm.dat', 'w') as f:
         for b, mae in mae_sfm:
             f.write(f'{b} {mae}\n')
 
-    with open('plot/mean_spur_pcsa.dat', 'w') as f:
+    with open('mean_spur_pcsa.dat', 'w') as f:
         for b, spur in mean_spur_pcsa:
             f.write(f'{b} {spur}\n')
 
-    with open('plot/mean_spur_sfm.dat', 'w') as f:
+    with open('mean_spur_sfm.dat', 'w') as f:
         for b, spur in mean_spur_sfm:
             f.write(f'{b} {spur}\n')
 
+
 def intersections_as_grid(intersections: Iterable[Intersection]):
-    vertical_streets = ['anibal_pinto', 'capuolican', 'rengo', 'lincoyan', 'angol', 'salas', 'serrano', 'prat']
-    horizontal_streets = ['rozas', 'heras', 'carrera', 'maipu', 'freire', 'barros', 'ohiggins']
+    horizontal_streets = list(reversed(['anibal_pinto', 'caupolican', 'rengo', 'lincoyan', 'angol', 'salas', 'serrano', 'prat']))
+    vertical_streets = ['rozas', 'heras', 'carrera', 'maipu', 'freire', 'barros', 'ohiggins']
 
     points = []
 
@@ -412,7 +433,7 @@ def plot_pcsa(points_real, points_pcsa):
 def plot_sfm(points_real, points_sfm):
     plt.plot([x for x, _ in points_sfm], [y for _, y in points_sfm], marker='o', linestyle='')
     plt.plot([x for x, _ in points_real], [y for _, y in points_real], marker='o', linestyle='', alpha=.6)
-    plt.legend(['SFM b=9 p=0.8', 'Real'])
+    plt.legend(['SFM b=9 p=0.85', 'Real'])
     plt.grid(True)
     plt.xlim([0, 7])
     plt.ylim([0, 6])
@@ -431,16 +452,36 @@ def plot_hll(points_real, points_hll):
     plt.close()
 
 
+def plot_path(path_points):
+    plt.plot([x for x, _ in path_points], [y for _, y in path_points], marker='o', linestyle='')
+    plt.grid(True)
+    plt.xlim([0, 7])
+    plt.ylim([0, 6])
+    plt.savefig('path.png')
+    plt.close()
+
+
+
+if __name__ != '__main__':
+    graph = generate_intersection_graph()
+    print(graph[Intersection('rozas', 'angol')])
+
 if __name__ == '__main__':
-    grid = TrafficGrid(generate_intersection_graph(), init_p=12, init_b=9, probability=0.8)
+    grid_hll = TrafficGrid(generate_intersection_graph(),
+                           sketch=HLLSketch(p=14))
+    grid_pcsa = TrafficGrid(generate_intersection_graph(),
+                            sketch=PCSASketch(b=9))
+    grid_sfm = TrafficGrid(generate_intersection_graph(),
+                           sketch=SketchFlipMerge(b=9, p=.85))
 
     exclude_plates = frozenset(['AA-AA-07', 'AA-AA-05', 'AA-AR-82', 'AB-KN-67', 'BC-HM-68'])
 
-    grid.generate_static_flow_on_street('carrera', 15000, exclude=exclude_plates)
-    grid.generate_static_flow_on_street('prat', 5000, exclude=exclude_plates)
-    grid.generate_random_flow(3000, exclude=exclude_plates)
+    for grid in (grid_hll, grid_pcsa, grid_sfm):
+        grid.generate_static_flow_on_street('carrera', 8000, exclude=exclude_plates)
+        grid.generate_static_flow_on_street('prat', 2500, exclude=exclude_plates)
+        grid.generate_random_flow(2500, exclude=exclude_plates)
 
-    intersection = grid.all_intersections_including_street('salas')[0]
+    intersection = grid_hll.all_intersections_including_street('salas')[0]
 
     path = [
         Intersection('prat', 'heras'),
@@ -452,19 +493,22 @@ if __name__ == '__main__':
     ]
 
     plate_to_find = 'BC-HM-68'
-    grid.insert_path(plate_to_find, path)
 
-    path_found = grid.find_path_for_plate(plate_to_find, 'SFM')
+    grid_sfm.insert_path(plate_to_find, path)
+    grid_hll.insert_path(plate_to_find, path)
+    grid_pcsa.insert_path(plate_to_find, path)
+
+    path_found = grid_sfm.find_path_for_plate(plate_to_find)
     spurious_intersections = path_found.difference(path)
     print('path found (SFM)', path_found)
     print(f'spurious intersections ({len(spurious_intersections)}, SFM) {spurious_intersections}')
 
-    optimized_hll_path_found = grid.find_path_for_plate(plate_to_find, 'HLL')
+    optimized_hll_path_found = grid_hll.find_path_using_hll_optimized(plate_to_find)
     spurious_intersections = optimized_hll_path_found.difference(path)
     print('path found (hll, optimized)', optimized_hll_path_found)
     print(f'spurious intersections ({len(spurious_intersections)}, HLL, optimized) {spurious_intersections}')
 
-    optimized_pcsa_path_found = grid.find_path_using_pcsa_optimized(plate_to_find)
+    optimized_pcsa_path_found = grid_pcsa.find_path_using_pcsa_optimized(plate_to_find)
     spurious_intersections = optimized_pcsa_path_found.difference(path)
     print('path found (PCSA, optimized): ', optimized_pcsa_path_found)
     print(f'spurious intersections ({len(spurious_intersections)}, PCSA, optimized) {spurious_intersections}')
@@ -478,9 +522,9 @@ if __name__ == '__main__':
     plot_sfm(points_real=intersections_as_grid(path),
              points_sfm=intersections_as_grid(path_found))
 
-    print('hll estimation', grid.hll_cardinality_for_intersection(intersection))
-    print('real cardinality', grid.real_cardinality_for_intersection(intersection))
-    print('pcsa estimation', grid.pcsa_cardinality_for_intersection(intersection))
-    print('sfm estimation', grid.sfm_cardinality_for_intersection(intersection))
-    print('carrera-serrano cardinality', grid.real_cardinality_for_intersection(Intersection('carrera', 'serrano')))
+    print('real cardinality', grid_hll.real_cardinality_for_intersection(intersection))
+    print('hll estimation', grid_hll.estimate_cardinality_for_intersection(intersection))
+    print('pcsa estimation', grid_pcsa.estimate_cardinality_for_intersection(intersection))
+    print('sfm estimation', grid_sfm.estimate_cardinality_for_intersection(intersection))
+    print('carrera-serrano cardinality', grid_hll.real_cardinality_for_intersection(Intersection('carrera', 'serrano')))
 
