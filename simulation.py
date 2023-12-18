@@ -4,7 +4,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, asdict
 from enum import Enum, auto
 from functools import partial
-from typing import Optional, Callable, Iterable, Tuple
+from typing import Optional, Callable, Iterable, Tuple, TypeAlias, Union
 import time
 
 import mmh3
@@ -171,7 +171,8 @@ class TrafficGrid:
     def __init__(self,
                  intersection_graph: dict[Intersection, list[Intersection]],
                  borders: set[Intersection],
-                 sketch: CardinalityEstimator):
+                 sketch: Callable[[...], CardinalityEstimator],
+                 sketch_kwargs: dict[str, Union[int, float]]):
         self.intersection_graph = intersection_graph
         self.borders = borders
 
@@ -181,11 +182,10 @@ class TrafficGrid:
         self._intersection_to_count_map: dict[Intersection, set] = {}
 
         for intersection in self.intersection_graph.keys():
-            self._intersection_to_sketch_map[intersection] = deepcopy(self._sketch)
+            self._intersection_to_sketch_map[intersection] = sketch(**sketch_kwargs)
             self._intersection_to_count_map[intersection] = set()
 
         self._already_added = set()
-
 
     def all_intersections(self) -> list[Intersection]:
         intersections = []
@@ -257,8 +257,8 @@ class TrafficGrid:
         return path
 
     def find_path_using_hll_optimized(self, car_plate: str):
-        if not isinstance(self._sketch, HLLSketch):
-            raise ValueError(f'Only valid for self.sketch=HLLSketch, found self._sketch={type(self._sketch)}')
+        if self._sketch.__name__ != 'HLLSketch':
+            raise ValueError(f'Only valid for self.sketch=HLLSketch, found self._sketch={self._sketch.__name__}')
 
         path = set()
 
@@ -278,8 +278,8 @@ class TrafficGrid:
         return path
 
     def find_path_using_pcsa_optimized(self, car_plate: str):
-        if not isinstance(self._sketch, PCSASketch):
-            raise ValueError(f'Only valid for self.sketch=PCSASketch, found self._sketch={type(self._sketch)}')
+        if self._sketch.__name__ != 'PCSASketch':
+            raise ValueError(f'Only valid for self.sketch=HLLSketch, found self._sketch={self._sketch.__name__}')
 
         path = set()
 
@@ -455,7 +455,6 @@ def plot_path(path_points):
     plt.savefig('path.png')
 
 
-
 if __name__ != '__main__':
     graph, borders = generate_intersection_graph()
     print(graph[Intersection('rozas', 'angol')])
@@ -466,18 +465,24 @@ if __name__ == '__main__':
 
     grid_hll = TrafficGrid(intersection_graph,
                            borders=borders,
-                           sketch=HLLSketch(p=14))
+                           sketch=HLLSketch,
+                           sketch_kwargs={'p': 14})
+
     grid_pcsa = TrafficGrid(intersection_graph,
                             borders=borders,
-                            sketch=PCSASketch(b=8))
+                            sketch=PCSASketch,
+                            sketch_kwargs={'b': 9})
+
     grid_sfm = TrafficGrid(intersection_graph,
                            borders=borders,
-                           sketch=SketchFlipMerge(b=8, p=.90))
+                           sketch=SketchFlipMerge,
+                           sketch_kwargs={'b': 9, 'p': .85})
 
     exclude_plates = frozenset(['AA-AA-07', 'AA-AA-05', 'AA-AR-82', 'AB-KN-67', 'BC-HM-68'])
 
     for plate, path in generate_random_paths(intersection_graph, borders, 5000, exclude_plates):
         print('Adding path', path)
+
         grid_hll.insert_path(plate, path)
         grid_pcsa.insert_path(plate, path)
         grid_sfm.insert_path(plate, path)
@@ -486,7 +491,7 @@ if __name__ == '__main__':
         grid.generate_static_flow_on_street('carrera', 3000, exclude=exclude_plates)
         grid.generate_static_flow_on_street('prat', 2500, exclude=exclude_plates)
 
-    intersection = grid_hll.all_intersections_including_street('salas')[0]
+    intersection = Intersection('serrano', 'maipu')
 
     path = [
         Intersection('prat', 'heras'),
