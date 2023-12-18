@@ -4,7 +4,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, asdict
 from enum import Enum, auto
 from functools import partial
-from typing import Optional, Callable, Iterable
+from typing import Optional, Callable, Iterable, Tuple
 import time
 
 import mmh3
@@ -67,18 +67,22 @@ class Intersection:
                 or (self.street2 == other.street1 and self.street1 == other.street2))
 
 
-def generate_intersection_graph() -> dict[Intersection]:
+def generate_intersection_graph() -> Tuple[dict[Intersection], set[Intersection]]:
     horizontal_streets = list(reversed(['anibal_pinto', 'caupolican', 'rengo', 'lincoyan', 'angol', 'salas', 'serrano', 'prat']))
     horizontal_streets_direction = list(reversed(['right', 'left', 'right', 'left', 'right', 'left', 'right', 'left']))
     vertical_streets = ['rozas', 'heras', 'carrera', 'maipu', 'freire', 'barros', 'ohiggins']
     vertical_streets_direction = ['down', 'up', 'up_down', 'up', 'down', 'up', 'up_down']
 
     intersection_graph = dict()
+    borders = set()
 
     for i, vertical_street in enumerate(vertical_streets):
         for j, horizontal_street in enumerate(horizontal_streets):
             new_intersection = Intersection(vertical_street, horizontal_street)
             intersection_graph[new_intersection] = []
+
+            if i == 0 or j == 0:
+                borders.add(new_intersection)
 
             if i > 0 and horizontal_streets_direction[j] == 'left':
                 lef_intersection = Intersection(vertical_streets[i - 1], horizontal_street)
@@ -96,16 +100,80 @@ def generate_intersection_graph() -> dict[Intersection]:
                 upper_intersection = Intersection(vertical_street, horizontal_streets[j + 1])
                 intersection_graph[new_intersection].append(upper_intersection)
 
-    return intersection_graph
+    return intersection_graph, borders
+
+
+def has_a_viable_neighbour(graph, vertex: Intersection, visited: set[Intersection]) -> bool:
+    neighbours = graph[vertex]
+
+    for intersection in neighbours:
+        if intersection not in visited and graph[intersection]:
+            return True
+
+    return False
+
+
+def generate_random_walk(graph: dict,
+                         starting_node: Intersection,
+                         ending_condition: Callable,
+                         min_path_len: int = 3) -> list[Intersection]:
+    current_path_len = 0
+
+    # We'll want to avoid having cycles...
+    already_visited: set[Intersection] = set()
+    traversed_intersections: list[Intersection] = []
+
+    current_node = starting_node
+
+    # We'll want to have at least a couple of intersections per walk
+    while current_path_len < min_path_len or not ending_condition(current_node):
+        next_node = random.choice(graph[current_node])
+
+        # Prevent a cycles and dead-ends
+        while next_node in already_visited or TrafficGrid.is_dead_end(next_node, graph, already_visited):
+            neighbouring_nodes = len(graph[current_node])
+            visited_neighbouring_nodes = len(set(graph[current_node]).intersection(already_visited))
+
+            if neighbouring_nodes - visited_neighbouring_nodes < 2:
+                return traversed_intersections
+
+            if has_a_viable_neighbour(graph, current_node, already_visited):
+                return traversed_intersections
+
+            next_node = random.choice(graph[current_node])
+
+        already_visited.add(current_node)
+        traversed_intersections.append(current_node)
+        current_node = next_node
+
+    return traversed_intersections
+
+
+def generate_random_paths(graph, borders, cardinality: int, exclude=None) -> list[Tuple[str, list[Intersection]]]:
+    """ Generates """
+    paths = []
+
+    for _ in range(cardinality):
+        new_car_plate = generate_random_car_plate(exclude=exclude)
+        # Start from a border vertex that has a non-zero amount of adjacent nodes
+        starting_intersection = random.choice([intersection for intersection in graph.keys() if graph[intersection]])
+
+        random_walk = generate_random_walk(graph=graph,
+                                           starting_node=starting_intersection,
+                                           ending_condition=lambda current_node: current_node in borders)
+
+        paths.append((new_car_plate, random_walk))
+
+    return paths
 
 
 class TrafficGrid:
-    def __init__(
-            self,
-            intersection_graph: dict[Intersection, list[Intersection]],
-            sketch: CardinalityEstimator,
-    ):
+    def __init__(self,
+                 intersection_graph: dict[Intersection, list[Intersection]],
+                 borders: set[Intersection],
+                 sketch: CardinalityEstimator):
         self.intersection_graph = intersection_graph
+        self.borders = borders
 
         self._sketch = sketch
 
@@ -118,14 +186,6 @@ class TrafficGrid:
 
         self._already_added = set()
 
-    def get_frontiers(self) -> set[Intersection]:
-        frontiers = set()
-
-        for intersection, neighbours in self.intersection_graph.items():
-            if len(neighbours) < 4:
-                frontiers.add(intersection)
-
-        return frontiers
 
     def all_intersections(self) -> list[Intersection]:
         intersections = []
@@ -150,71 +210,6 @@ class TrafficGrid:
 
         next_node_adjacent_nodes = set(graph[node])
         return next_node_adjacent_nodes.intersection(visited) == next_node_adjacent_nodes
-
-    def has_a_viable_neighbour(self, node: Intersection, visited) -> bool:
-        neighbours = self.intersection_graph[node]
-
-        for intersection in neighbours:
-            if intersection not in visited and self.intersection_graph[intersection]:
-                return True
-
-        return False
-
-    def generate_random_walk(self,
-                             graph: dict,
-                             starting_node: Intersection,
-                             ending_condition: Callable,
-                             min_path_len: int = 3) -> list[Intersection]:
-        current_path_len = 0
-
-        # We'll want to avoid having cycles...
-        already_visited: set[Intersection] = set()
-        traversed_intersections: list[Intersection] = []
-
-        current_node = starting_node
-
-        # We'll want to have at least a couple of intersections per walk
-        while (current_path_len < min_path_len or not ending_condition(current_node)):
-            next_node = random.choice(graph[current_node])
-
-            # Prevent a cycles and dead-ends
-            while next_node in already_visited or TrafficGrid.is_dead_end(next_node, graph, already_visited):
-                neighbouring_nodes = len(graph[current_node])
-                visited_neighbouring_nodes = len(set(graph[current_node]).intersection(already_visited))
-
-                if neighbouring_nodes - visited_neighbouring_nodes < 2:
-                    return traversed_intersections
-
-                if self.has_a_viable_neighbour(current_node, already_visited):
-                    return traversed_intersections
-
-                next_node = random.choice(graph[current_node])
-
-            already_visited.add(current_node)
-            traversed_intersections.append(current_node)
-            current_node = next_node
-
-        return traversed_intersections
-
-    def generate_random_flow(self, cardinality: int, exclude=None):
-        """ Generates """
-
-        frontiers = self.get_frontiers()
-
-        for _ in range(cardinality):
-            new_car_plate = generate_random_car_plate(exclude=exclude)
-            # Start from a border vertex that has a non-zero amount of adjacent nodes
-            starting_intersection = random.choice([intersection for intersection in frontiers if self.intersection_graph[intersection]])
-
-            random_walk = self.generate_random_walk(graph=self.intersection_graph,
-                                                    starting_node=starting_intersection,
-                                                    ending_condition=lambda current_node: current_node in frontiers)
-
-            for intersection in random_walk:
-                self._intersection_to_count_map[intersection].add(new_car_plate)
-
-                sketch = self._intersection_to_sketch_map[intersection]
-                sketch.add(new_car_plate)
 
     def generate_static_flow_on_street(self, street: str, cardinality: int, exclude=None):
         intersections = self.all_intersections_including_street(street)
@@ -458,28 +453,38 @@ def plot_path(path_points):
     plt.xlim([0, 7])
     plt.ylim([0, 6])
     plt.savefig('path.png')
-    plt.close()
 
 
 
 if __name__ != '__main__':
-    graph = generate_intersection_graph()
+    graph, borders = generate_intersection_graph()
     print(graph[Intersection('rozas', 'angol')])
 
+
 if __name__ == '__main__':
-    grid_hll = TrafficGrid(generate_intersection_graph(),
+    intersection_graph, borders = generate_intersection_graph()
+
+    grid_hll = TrafficGrid(intersection_graph,
+                           borders=borders,
                            sketch=HLLSketch(p=14))
-    grid_pcsa = TrafficGrid(generate_intersection_graph(),
-                            sketch=PCSASketch(b=9))
-    grid_sfm = TrafficGrid(generate_intersection_graph(),
-                           sketch=SketchFlipMerge(b=9, p=.85))
+    grid_pcsa = TrafficGrid(intersection_graph,
+                            borders=borders,
+                            sketch=PCSASketch(b=8))
+    grid_sfm = TrafficGrid(intersection_graph,
+                           borders=borders,
+                           sketch=SketchFlipMerge(b=8, p=.90))
 
     exclude_plates = frozenset(['AA-AA-07', 'AA-AA-05', 'AA-AR-82', 'AB-KN-67', 'BC-HM-68'])
 
+    for plate, path in generate_random_paths(intersection_graph, borders, 5000, exclude_plates):
+        print('Adding path', path)
+        grid_hll.insert_path(plate, path)
+        grid_pcsa.insert_path(plate, path)
+        grid_sfm.insert_path(plate, path)
+
     for grid in (grid_hll, grid_pcsa, grid_sfm):
-        grid.generate_static_flow_on_street('carrera', 8000, exclude=exclude_plates)
+        grid.generate_static_flow_on_street('carrera', 3000, exclude=exclude_plates)
         grid.generate_static_flow_on_street('prat', 2500, exclude=exclude_plates)
-        grid.generate_random_flow(2500, exclude=exclude_plates)
 
     intersection = grid_hll.all_intersections_including_street('salas')[0]
 
@@ -498,9 +503,9 @@ if __name__ == '__main__':
     grid_hll.insert_path(plate_to_find, path)
     grid_pcsa.insert_path(plate_to_find, path)
 
-    path_found = grid_sfm.find_path_for_plate(plate_to_find)
-    spurious_intersections = path_found.difference(path)
-    print('path found (SFM)', path_found)
+    sfm_path_found = grid_sfm.find_path_for_plate(plate_to_find)
+    spurious_intersections = sfm_path_found.difference(path)
+    print('path found (SFM)', sfm_path_found)
     print(f'spurious intersections ({len(spurious_intersections)}, SFM) {spurious_intersections}')
 
     optimized_hll_path_found = grid_hll.find_path_using_hll_optimized(plate_to_find)
@@ -520,7 +525,7 @@ if __name__ == '__main__':
              points_hll=intersections_as_grid(optimized_hll_path_found))
 
     plot_sfm(points_real=intersections_as_grid(path),
-             points_sfm=intersections_as_grid(path_found))
+             points_sfm=intersections_as_grid(sfm_path_found))
 
     print('real cardinality', grid_hll.real_cardinality_for_intersection(intersection))
     print('hll estimation', grid_hll.estimate_cardinality_for_intersection(intersection))
