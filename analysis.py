@@ -2,7 +2,17 @@ import string
 
 import mmh3
 
-from utils import find_leading_zeros_for_hll
+from utils import find_leading_zeros_for_hll, find_leading_zeros_for_pcsa
+
+
+def all_possible_plates():
+    for first in string.ascii_uppercase:
+        for second in string.ascii_uppercase:
+            for third in string.ascii_uppercase:
+                for fourth in string.ascii_uppercase:
+                    for fifth in range(10):
+                        for sixth in range(10):
+                            yield f'{first}{second}-{third}{fourth}-{fifth}{sixth}'
 
 
 def find_plate_with_target_leading_zeros_for_hll(p: int = 14, target: int = 50):
@@ -22,7 +32,7 @@ def find_plate_with_target_leading_zeros_for_hll(p: int = 14, target: int = 50):
     raise ValueError('Couldn\'t find target')
 
 
-def leading_zeros_distribution_for_plates_hll(p: int =14, starting: str = 'A', ending: str = 'Z'):
+def leading_zeros_distribution_for_plates_hll(p: int = 14, starting: str = 'A', ending: str = 'Z'):
     count = {}
 
     starting_index = string.ascii_uppercase.find(starting.upper())
@@ -44,6 +54,25 @@ def leading_zeros_distribution_for_plates_hll(p: int =14, starting: str = 'A', e
                                 count[ldz] += 1
 
     return count
+
+
+def find_plate_with_target_leading_zeros_for_pcsa(target, b=9, bitmap_length=32):
+    for plate in all_possible_plates():
+        h = mmh3.hash64(plate, 1, False)[0]
+        ldz = find_leading_zeros_for_pcsa(value=h, b=b, bitmap_length=bitmap_length)
+
+        if ldz == target:
+            return plate
+
+    raise ValueError('Couldn\'t find target')
+
+
+def find_plates_until_8_leading_zeros_pcsa(b=9, bitmap_length=32):
+    for i in range(31 + 1):
+        try:
+            print(f'Found plate with {i} leading zeros: ', find_plate_with_target_leading_zeros_for_pcsa(i, b=9))
+        except ValueError:
+            print(f'Couldn\'t find a car plate with {i} leading zeros.')
 
 
 def find_plates_until_32_leading_zeros_hll():
@@ -93,5 +122,6 @@ Couldn't find a car plate with 32 leading zeros.
 
 if __name__ == '__main__':
     # Approximately, since 2008 to date
-    print(leading_zeros_distribution_for_plates_hll(starting='b', ending='s'))
+    # print(leading_zeros_distribution_for_plates_hll(starting='b', ending='s'))
+    find_plates_until_8_leading_zeros_pcsa()
 

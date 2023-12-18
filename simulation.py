@@ -476,11 +476,11 @@ if __name__ == '__main__':
     grid_sfm = TrafficGrid(intersection_graph,
                            borders=borders,
                            sketch=SketchFlipMerge,
-                           sketch_kwargs={'b': 9, 'p': .85})
+                           sketch_kwargs={'b': 9, 'p': .9})
 
     exclude_plates = frozenset(['AA-AA-07', 'AA-AA-05', 'AA-AR-82', 'AB-KN-67', 'BC-HM-68'])
 
-    for plate, path in generate_random_paths(intersection_graph, borders, 5000, exclude_plates):
+    for plate, path in generate_random_paths(intersection_graph, borders, 4000, exclude_plates):
         print('Adding path', path)
 
         grid_hll.insert_path(plate, path)
@@ -502,7 +502,9 @@ if __name__ == '__main__':
         Intersection('salas', 'freire'),
     ]
 
-    plate_to_find = 'BC-HM-68'
+    # 'CC-HY-80' 20 ldz pcsa
+    # 'BC-HM-68' 20 ldz hll
+    plate_to_find = 'CC-HY-80'
 
     grid_sfm.insert_path(plate_to_find, path)
     grid_hll.insert_path(plate_to_find, path)
