@@ -67,18 +67,18 @@ def find_plate_with_target_leading_zeros_for_pcsa(target, b=9, bitmap_length=32)
     raise ValueError('Couldn\'t find target')
 
 
-def find_plates_until_8_leading_zeros_pcsa(b=9, bitmap_length=32):
+def find_plates_until_8_leading_zeros_pcsa(b=9):
     for i in range(31 + 1):
         try:
-            print(f'Found plate with {i} leading zeros: ', find_plate_with_target_leading_zeros_for_pcsa(i, b=9))
+            print(f'Found plate with {i} leading zeros: ', find_plate_with_target_leading_zeros_for_pcsa(i, b=b))
         except ValueError:
             print(f'Couldn\'t find a car plate with {i} leading zeros.')
 
 
-def find_plates_until_32_leading_zeros_hll():
+def find_plates_until_32_leading_zeros_hll(p=14):
     for i in range(32 + 1):
         try:
-            print(f'Found plate with {i} leading zeros: ', find_plate_with_target_leading_zeros_for_hll(14, i))
+            print(f'Found plate with {i} leading zeros: ', find_plate_with_target_leading_zeros_for_hll(p, i))
         except ValueError:
             print(f'Couldn\'t find a car plate with {i} leading zeros.')
 
