@@ -5,36 +5,7 @@ import mmh3
 from utils import find_leading_zeros_for_hll, find_leading_zeros_for_pcsa
 
 
-def all_possible_plates():
-    for first in string.ascii_uppercase:
-        for second in string.ascii_uppercase:
-            for third in string.ascii_uppercase:
-                for fourth in string.ascii_uppercase:
-                    for fifth in range(10):
-                        for sixth in range(10):
-                            yield f'{first}{second}-{third}{fourth}-{fifth}{sixth}'
-
-
-def find_plate_with_target_leading_zeros_for_hll(p: int = 14, target: int = 50):
-    for first in string.ascii_uppercase:
-        for second in string.ascii_uppercase:
-            for third in string.ascii_uppercase:
-                for fourth in string.ascii_uppercase:
-                    for fifth in range(10):
-                        for sixth in range(10):
-                            plate = f'{first}{second}-{third}{fourth}-{fifth}{sixth}'
-                            h = mmh3.hash64(plate, 1, False)[0]
-                            ldz = find_leading_zeros_for_hll(value=h, p=p)
-
-                            if ldz == target:
-                                return plate
-
-    raise ValueError('Couldn\'t find target')
-
-
-def leading_zeros_distribution_for_plates_hll(p: int = 14, starting: str = 'A', ending: str = 'Z'):
-    count = {}
-
+def all_possible_plates(starting: str = 'A', ending: str = 'Z'):
     starting_index = string.ascii_uppercase.find(starting.upper())
     ending_index = string.ascii_uppercase.find(ending.upper())
 
@@ -44,14 +15,31 @@ def leading_zeros_distribution_for_plates_hll(p: int = 14, starting: str = 'A', 
                 for fourth in string.ascii_uppercase:
                     for fifth in range(10):
                         for sixth in range(10):
-                            plate = f'{first}{second}-{third}{fourth}-{fifth}{sixth}'
-                            h = mmh3.hash64(plate, 1, False)[0]
-                            ldz = find_leading_zeros_for_hll(value=h, p=p)
+                            yield f'{first}{second}-{third}{fourth}-{fifth}{sixth}'
 
-                            if count.get(ldz, None) is None:
-                                count[ldz] = 1
-                            else:
-                                count[ldz] += 1
+
+def find_plate_with_target_leading_zeros_for_hll(p: int = 14, target: int = 50):
+    for plate in all_possible_plates():
+        h = mmh3.hash64(plate, 1, False)[0]
+        ldz = find_leading_zeros_for_hll(value=h, p=p)
+
+        if ldz == target:
+            return plate
+
+    raise ValueError('Couldn\'t find target')
+
+
+def leading_zeros_distribution_for_plates_hll(p: int = 14, starting: str = 'A', ending: str = 'Z'):
+    count = {}
+
+    for plate in all_possible_plates(starting=starting, ending=ending):
+        h = mmh3.hash64(plate, 1, False)[0]
+        ldz = find_leading_zeros_for_hll(value=h, p=p)
+
+        if count.get(ldz, None) is None:
+            count[ldz] = 1
+        else:
+            count[ldz] += 1
 
     return count
 
@@ -67,20 +55,34 @@ def find_plate_with_target_leading_zeros_for_pcsa(target, b=9, bitmap_length=32)
     raise ValueError('Couldn\'t find target')
 
 
-def find_plates_until_8_leading_zeros_pcsa(b=9):
-    for i in range(31 + 1):
+def find_plates_until_n_leading_zeros_pcsa(n=10, b=9):
+    result = {}
+
+    for i in range(n + 1):
         try:
-            print(f'Found plate with {i} leading zeros: ', find_plate_with_target_leading_zeros_for_pcsa(i, b=b))
+            plate = find_plate_with_target_leading_zeros_for_pcsa(i, b=b)
+            result[i] = plate
+
+            print(f'Found plate with {i} leading zeros: ', plate)
         except ValueError:
             print(f'Couldn\'t find a car plate with {i} leading zeros.')
 
+    return result
 
-def find_plates_until_32_leading_zeros_hll(p=14):
-    for i in range(32 + 1):
+
+def find_plates_until_n_leading_zeros_hll(n=32, p=14):
+    result = {}
+
+    for i in range(n + 1):
         try:
-            print(f'Found plate with {i} leading zeros: ', find_plate_with_target_leading_zeros_for_hll(p, i))
+            plate = find_plate_with_target_leading_zeros_for_hll(p, i)
+            result[i] = plate
+
+            print(f'Found plate with {i} leading zeros: ', plate)
         except ValueError:
             print(f'Couldn\'t find a car plate with {i} leading zeros.')
+
+    return result
 
     # Output
     """
@@ -123,5 +125,5 @@ Couldn't find a car plate with 32 leading zeros.
 if __name__ == '__main__':
     # Approximately, since 2008 to date
     # print(leading_zeros_distribution_for_plates_hll(starting='b', ending='s'))
-    find_plates_until_8_leading_zeros_pcsa()
+    print(find_plates_until_n_leading_zeros_pcsa(n=8))
 

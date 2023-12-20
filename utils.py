@@ -32,6 +32,15 @@ def find_leading_zeros_for_hll(value: int, p: int):
     return count
 
 
+def find_leading_zeros_for_pcsa(value: int, b: int, bitmap_length: int):
+    count = 0
+
+    for mask_idx in range(b, bitmap_length):
+        if value & (1 << mask_idx):
+            return count
+
+        count += 1
+
 if __name__ == '__main__':
     h = mmh3.hash64('AA-AA-AA', 1, False)[0]
     ldz = find_leading_zeros_for_hll(value=h, p=14)

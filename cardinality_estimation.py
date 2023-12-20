@@ -236,7 +236,7 @@ def l_func_second_derivative(n, T: List[List[int]], p: float, q: float):
 
 class SketchFlipMerge(CardinalityEstimator):
     BITMAP_LENGTH = 32
-    NEWTON_ITERS = 50
+    NEWTON_ITERS = 100
 
     def __init__(self, b: int, p: float, M: Optional[array] = None):
         self.b = b
@@ -344,7 +344,7 @@ if __name__ == '__main__':
 
     print(pcsa_sketch.estimate())
 
-    sketch_flip_merge = SketchFlipMerge(8, p=0.85)
+    sketch_flip_merge = SketchFlipMerge(9, p=0.85)
 
     for random_str in random_strs:
         sketch_flip_merge.add(random_str)

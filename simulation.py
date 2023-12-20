@@ -10,6 +10,7 @@ import time
 import mmh3
 from matplotlib import pyplot as plt
 
+from analysis import find_plates_until_n_leading_zeros_pcsa
 from cardinality_estimation import HLLSketch, PCSASketch, SketchFlipMerge, CardinalityEstimator
 from utils import generate_random_car_plate
 
@@ -297,7 +298,11 @@ class TrafficGrid:
         return path
 
 
-def compare_pcsa_sfm(iters: int = 2):
+def compare_pcsa_sfm(iters: int = 5):
+    intersection_graph, borders = generate_intersection_graph()
+
+    exclude_plates = frozenset(['AA-AA-07', 'AA-AA-05', 'AA-AR-82', 'AB-KN-67', 'BC-HM-68', 'CC-HY-80'])
+
     path = [
         Intersection('prat', 'heras'),
         Intersection('heras', 'serrano'),
@@ -319,6 +324,8 @@ def compare_pcsa_sfm(iters: int = 2):
     for b in range(4, 10):
         print(f'Current b: {b}')
 
+        plates = find_plates_until_n_leading_zeros_pcsa(n=8, b=b)
+
         time_pcsa = 0
         time_sfm = 0
 
@@ -330,41 +337,49 @@ def compare_pcsa_sfm(iters: int = 2):
 
         for i in range(iters):
             print(f'Current iter: {i}')
+            plate_to_find = plates[8]
 
-            grid_pcsa = TrafficGrid(intersection_graph=generate_intersection_graph(),
-                                    sketch=PCSASketch(b=b))
-            grid_pcsa.generate_random_flow(3000)
-            grid_pcsa.insert_path('AA-AA-AA', path)
+            grid_pcsa = TrafficGrid(intersection_graph,
+                                    borders=borders,
+                                    sketch=PCSASketch,
+                                    sketch_kwargs={'b': b})
+
+            grid_pcsa.insert_path(plate_to_find, path)
+
+            grid_sfm = TrafficGrid(intersection_graph,
+                                   borders=borders,
+                                   sketch=SketchFlipMerge,
+                                   sketch_kwargs={'b': b, 'p': .85})
+
+            grid_sfm.insert_path(plate_to_find, path)
+
+            for plate, path in generate_random_paths(intersection_graph, borders, 3000, exclude_plates):
+                # print('Adding path', path)
+
+                grid_pcsa.insert_path(plate, path)
+                grid_sfm.insert_path(plate, path)
 
             print(f'Finding path for pcsa')
-
             start = time.time()
-            path_found = grid.find_path_using_pcsa_optimized('AA-AA-AA')
+            path_found = grid_pcsa.find_path_using_pcsa_optimized(plate_to_find)
             time_pcsa += time.time() - start
 
             pcsa_spur += len(path_found.difference(path))
 
             print(f'Finding path for fsm')
-
-            grid_sfm = TrafficGrid(intersection_graph=generate_intersection_graph(),
-                                   sketch=SketchFlipMerge(b=b, p=.85))
-            grid_sfm.generate_random_flow(3000)
-            grid_sfm.insert_path('AA-AA-AA', path)
-
             start = time.time()
-            path_found = grid_sfm.find_path_for_plate('AA-AA-AA')
+            path_found = grid_sfm.find_path_for_plate(plate_to_find)
             time_sfm += time.time() - start
 
             sfm_spur += len(path_found.difference(path))
 
-            intersection = grid.all_intersections_including_street('salas')[0]
+            for intersection in grid_pcsa.all_intersections():
+                real_cardinality = grid_pcsa.real_cardinality_for_intersection(intersection)
+                pcsa_estimation = grid_pcsa.estimate_cardinality_for_intersection(intersection)
+                sfm_estimation = grid_sfm.estimate_cardinality_for_intersection(intersection)
 
-            real_cardinality = grid_pcsa.real_cardinality_for_intersection(intersection)
-            pcsa_estimation = grid_pcsa.estimate_cardinality_for_intersection(intersection)
-            sfm_estimation = grid_sfm.estimate_cardinality_for_intersection(intersection)
-
-            pcsa_error = abs(pcsa_estimation - real_cardinality)
-            sfm_error = abs(sfm_estimation - real_cardinality)
+                pcsa_error += abs(pcsa_estimation - real_cardinality)
+                sfm_error += abs(sfm_estimation - real_cardinality)
 
         mae_pcsa.append( (b, pcsa_error / iters) )
         mae_sfm.append( (b, sfm_error / iters) )
@@ -375,27 +390,27 @@ def compare_pcsa_sfm(iters: int = 2):
         results_pcsa.append( (b, time_pcsa / iters) )
         results_fsm.append( (b, time_sfm / iters) )
 
-    with open('time_pcsa.dat', 'w') as f:
+    with open('plot/time_pcsa.dat', 'w') as f:
         for b, t in results_pcsa:
             f.write(f'{b} {t}\n')
 
-    with open('time_sfm.dat', 'w') as f:
+    with open('plot/time_sfm.dat', 'w') as f:
         for b, t in results_fsm:
             f.write(f'{b} {t}\n')
 
-    with open('error_pcsa.dat', 'w') as f:
+    with open('plot/error_pcsa.dat', 'w') as f:
         for b, mae in mae_pcsa:
             f.write(f'{b} {mae}\n')
 
-    with open('error_sfm.dat', 'w') as f:
+    with open('plot/error_sfm.dat', 'w') as f:
         for b, mae in mae_sfm:
             f.write(f'{b} {mae}\n')
 
-    with open('mean_spur_pcsa.dat', 'w') as f:
+    with open('plot/mean_spur_pcsa.dat', 'w') as f:
         for b, spur in mean_spur_pcsa:
             f.write(f'{b} {spur}\n')
 
-    with open('mean_spur_sfm.dat', 'w') as f:
+    with open('plot/mean_spur_sfm.dat', 'w') as f:
         for b, spur in mean_spur_sfm:
             f.write(f'{b} {spur}\n')
 
@@ -455,11 +470,6 @@ def plot_path(path_points):
     plt.savefig('path.png')
 
 
-if __name__ != '__main__':
-    graph, borders = generate_intersection_graph()
-    print(graph[Intersection('rozas', 'angol')])
-
-
 if __name__ == '__main__':
     intersection_graph, borders = generate_intersection_graph()
 
@@ -478,9 +488,12 @@ if __name__ == '__main__':
                            sketch=SketchFlipMerge,
                            sketch_kwargs={'b': 9, 'p': .9})
 
-    exclude_plates = frozenset(['AA-AA-07', 'AA-AA-05', 'AA-AR-82', 'AB-KN-67', 'BC-HM-68'])
+    exclude_plates = frozenset(['AA-AA-07', 'AA-AA-05', 'AA-AR-82', 'AB-KN-67', 'BC-HM-68', 'CC-HY-80'])
 
-    for plate, path in generate_random_paths(intersection_graph, borders, 4000, exclude_plates):
+    # Cardinalidad de recorridos aleatorios
+    random_cardinality = 4000
+
+    for plate, path in generate_random_paths(intersection_graph, borders, random_cardinality, exclude_plates):
         print('Adding path', path)
 
         grid_hll.insert_path(plate, path)
